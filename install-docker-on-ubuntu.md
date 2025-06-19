@@ -219,6 +219,23 @@ In this setup:
 
 > **Note on Nested Volumes**: You might wonder why `laravel-storage` is defined separately when `app-code` already covers its children directory. This is a powerful Docker feature. By defining a more specific mount path, the `laravel-storage` volume "masks" the `storage/` directory inside the `app-code` volume. This separates your persistent data (user uploads, cache, logs) from your stateless application code, which is critical for safe deployments and easy backups.
 
+### A Pragmatic Choice: When to Use Bind Mounts in Production
+
+The advice to bake code into an image is the ideal best practice for scalable, portable applications. However, for a lone developer or a small team running multiple, similar sites on a single server, this can be inefficient.
+
+In this scenario, a hybrid approach is often the most practical choice:
+
+1.  **Build a Generic Base Image**: Create one clean, secure base image with your required dependencies (like PHP and its extensions).
+2.  **Use Bind Mounts for Code**: For each website, use the generic base image but bind mount its unique source code from the host (e.g., from `/var/www/site1.com`).
+
+**Why is this a good trade-off?**
+- **Resource Efficiency**: You have only one base image shared by all your sites, saving significant disk space.
+- **Deployment Speed**: To update a site, you just `git pull` the changes on the host and restart the container. There is no need to rebuild the image.
+
+With this method, you make a conscious decision to trade portability for efficiency, which is a perfectly valid engineering choice for this specific context.
+
+**Crucially, you should still use named volumes for any truly persistent data, like database files or Laravel's `storage` directory.** The compromise is only on the stateless application code.
+
 -   **Limit Resources**: Configure memory and CPU limits for your containers to prevent them from consuming too many resources on the host.
 -   **Configure Logging**: By default, Docker uses the `json-file` logging driver, which can consume a lot of disk space. For production, configure a log rotation or use a different logging driver like `syslog` or send logs to a centralized logging solution.
 -   **Use Docker Content Trust (DCT)**: DCT provides cryptographic signing and verification of Docker images.
