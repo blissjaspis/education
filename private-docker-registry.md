@@ -24,7 +24,7 @@ This guide will use a DigitalOcean Droplet as the host, but the principles apply
 - A registered domain name (e.g., `your-domain.com`). This is highly recommended for setting up a secure registry with TLS.
 - A DigitalOcean Droplet (VPS) running a modern Linux distribution like Ubuntu 22.04.
 - Docker and Docker Compose installed on your Droplet.
-- DNS `A` record pointing a subdomain (e.g., `registry.your-domain.com`) to your Droplet's IP address.
+- DNS `A` record pointing a subdomain (e.g., `registry.your-domain.com`) to your Droplet's IP address. You will also need another subdomain for Komodo (e.g., `komodo.your-domain.com`).
 
 ## 1. Setting up the Docker Registry
 
@@ -60,7 +60,7 @@ We will use `docker-compose` to manage our services.
     ```
 
 3.  **Create an Nginx configuration file:**
-    Create a file named `nginx/conf.d/registry.conf` with the following content. Replace `registry.your-domain.com` with your actual subdomain.
+    Create a file named `nginx/conf.d/registry.conf` with the following content. Replace `registry.your-domain.com` and `komodo.your-domain.com` with your actual subdomains.
 
     ```nginx
     upstream docker-registry {
@@ -70,6 +70,15 @@ We will use `docker-compose` to manage our services.
     server {
       listen 80;
       server_name registry.your-domain.com;
+
+      location / {
+        return 301 https://$host$request_uri;
+      }
+    }
+
+    server {
+      listen 80;
+      server_name komodo.your-domain.com;
 
       location / {
         return 301 https://$host$request_uri;
@@ -103,6 +112,31 @@ We will use `docker-compose` to manage our services.
         proxy_read_timeout 900;
       }
     }
+
+    server {
+      listen 443 ssl http2;
+      server_name komodo.your-domain.com;
+
+      ssl_certificate /etc/letsencrypt/live/komodo.your-domain.com/fullchain.pem;
+      ssl_certificate_key /etc/letsencrypt/live/komodo.your-domain.com/privkey.pem;
+
+      # SSL settings
+      ssl_protocols TLSv1.2 TLSv1.3;
+      ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';
+
+      location / {
+        proxy_pass http://komodo:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto "https";
+        
+        # Required for WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+      }
+    }
     ```
 
 4.  **Set up Basic Authentication:**
@@ -116,17 +150,18 @@ We will use `docker-compose` to manage our services.
     ```
 
 5.  **Use Certbot to get a Let's Encrypt Certificate:**
-    Install Certbot and get a certificate. We use the `--standalone` mode on a temporary server. Make sure port 80 is not in use.
+    Install Certbot and get a certificate. We use the `--standalone` mode on a temporary server. Make sure port 80 is not in use. Run this for both subdomains.
     ```bash
     sudo certbot certonly --standalone -d registry.your-domain.com
+    sudo certbot certonly --standalone -d komodo.your-domain.com
     ```
-    This will create certificates in `/etc/letsencrypt/live/registry.your-domain.com/`.
+    This will create certificates in `/etc/letsencrypt/live/`.
 
 6.  **Create the `docker-compose.yml` file:**
-    Create a `docker-compose.yml` in your `docker-registry` directory.
+    Create a `docker-compose.yml` in your `docker-registry` directory. This will now include the registry, our Nginx proxy, and the Komodo service.
 
     ```yaml
-    version: '3'
+    version: '3.7'
 
     services:
       registry:
@@ -138,6 +173,17 @@ We will use `docker-compose` to manage our services.
         networks:
           - registry-net
 
+      komodo:
+        image: ghcr.io/moghtech/komodo:latest
+        container_name: komodo
+        restart: always
+        volumes:
+          - komodo-data:/app/data
+        networks:
+          - registry-net
+        depends_on:
+          - registry
+
       nginx-proxy:
         image: nginx:latest
         container_name: registry-nginx-proxy
@@ -146,18 +192,20 @@ We will use `docker-compose` to manage our services.
           - "80:80"
           - "443:443"
         volumes:
-          - ./nginx/conf.d:/etc/nginx/conf.d
-          - /etc/letsencrypt:/etc/letsencrypt
+          - ./nginx/conf.d:/etc/nginx/conf.d:/etc/nginx/conf.d:ro
+          - /etc/letsencrypt:/etc/letsencrypt:ro
         networks:
           - registry-net
         depends_on:
           - registry
+          - komodo
 
     networks:
       registry-net:
 
     volumes:
       registry-data:
+      komodo-data:
     ```
 
 7.  **Start the services:**
@@ -183,92 +231,36 @@ docker push registry.your-domain.com/my-image:latest
 docker pull registry.your-domain.com/my-image:latest
 ```
 
-## 3. Adding a Web UI
+## 3. Adding a Web UI: Komodo
 
-While the registry is functional, a web UI makes it easier to browse and manage images. The user mentioned `komo.do`, which seems to be less known. A popular and simple choice is `joxit/docker-registry-ui`.
+A Web UI for your build and deployment system, referencing [Komodo](https://github.com/moghtech/komodo). Komodo is a powerful open-source tool to build and deploy software across many servers, which fits perfectly with our private Docker registry.
 
-Let's update our `docker-compose.yml` to include the UI.
+We have already integrated Komodo into our `docker-compose.yml` and exposed it securely via Nginx at `https://komodo.your-domain.com`.
 
-1.  **Modify `docker-compose.yml`:**
+### Initial Komodo Setup
 
-    ```yaml
-    version: '3.7'
+1.  **Access the UI:** Navigate to `https://komodo.your-domain.com` in your browser.
+2.  **Configuration:** Komodo's initial setup and configuration (like connecting to your servers, defining applications, and setting up deployment pipelines) are done through its web interface. You can consult the official [Komodo documentation](https://komo.do/) for detailed guidance on its features.
+3.  **Connecting to the Private Registry:** Within Komodo, when you define a new application or service, you will specify the image source. Here, you will use the full path to your private registry, e.g., `registry.your-domain.com/my-app:latest`. Since Komodo is running on the same Docker network, it can pull images from the registry. You will need to configure credentials for your private registry within Komodo's settings.
 
-    services:
-      registry:
-        image: registry:2
-        container_name: private-registry
-        restart: always
-        volumes:
-          - registry-data:/var/lib/registry
-        environment:
-          - REGISTRY_DELETE_ENABLED=true # Enable image deletion in the UI
-        networks:
-          - registry-net
+## 4. CI/CD Integration with Komodo
 
-      registry-ui:
-        image: joxit/docker-registry-ui:latest
-        container_name: registry-ui
-        restart: always
-        ports:
-          - "8080:80"
-        environment:
-          - REGISTRY_URL=http://registry:5000
-          - REGISTRY_TITLE=My Private Registry
-          - DELETE_IMAGES=true
-          - REGISTRY_SECURED=true
-          - REGISTRY_USER=your_user # Your htpasswd username
-          - REGISTRY_PASSWORD=your_password # Your htpasswd password
-        networks:
-          - registry-net
-        depends_on:
-          - registry
+Integrating Komodo provides a more advanced CI/CD workflow. The process now becomes:
+1.  **CI (Continuous Integration):** Your CI pipeline (e.g., GitHub Actions) builds the Docker image and pushes it to your private registry.
+2.  **CD (Continuous Deployment):** The CI pipeline then triggers Komodo to start the deployment.
 
-      nginx-proxy:
-        image: nginx:latest
-        container_name: registry-nginx-proxy
-        restart: always
-        ports:
-          - "80:80"
-          - "443:443"
-        volumes:
-          - ./nginx/conf.d:/etc/nginx/conf.d
-          - /etc/letsencrypt:/etc/letsencrypt
-        networks:
-          - registry-net
-        depends_on:
-          - registry
+Here's an updated GitHub Actions workflow that demonstrates this concept.
 
-    networks:
-      registry-net:
+1.  **Add Komodo Secrets to GitHub:**
+    In addition to your Docker registry credentials, add Komodo secrets:
+    *   `KOMODO_URL`: `https://komodo.your-domain.com`
+    *   `KOMODO_API_KEY`: An API key generated from the Komodo UI.
 
-    volumes:
-      registry-data:
-    ```
-    **Note:** The UI now connects directly to the registry container over the internal Docker network. We also expose the UI on port 8080. You can access it via `http://your_droplet_ip:8080`. For better security, you could configure Nginx to proxy the UI as well, perhaps on a different subdomain.
-
-2.  **Restart the services:**
-    ```bash
-    docker-compose up -d
-    ```
-
-You can now visit `http://your_droplet_ip:8080` to see your registry's UI.
-
-## 4. CI/CD Integration
-
-You can integrate your private registry into your CI/CD pipeline. Here's an example using **GitHub Actions**.
-
-1.  **Add your registry credentials to GitHub Secrets:**
-    In your GitHub repository, go to `Settings` > `Secrets and variables` > `Actions` and add the following secrets:
-    *   `DOCKER_REGISTRY`: `registry.your-domain.com`
-    *   `DOCKER_USERNAME`: `your_user`
-    *   `DOCKER_PASSWORD`: The password you created with `htpasswd`.
-
-2.  **Create a GitHub Actions workflow:**
-    Create a file `.github/workflows/docker-publish.yml` in your project:
+2.  **Updated GitHub Actions Workflow:**
+    The workflow now includes a final step to call the Komodo API and trigger a deployment.
 
     ```yaml
-    name: Publish Docker Image
+    name: Build, Push, and Deploy
 
     on:
       push:
@@ -289,25 +281,37 @@ You can integrate your private registry into your CI/CD pipeline. Here's an exam
               password: ${{ secrets.DOCKER_PASSWORD }}
 
           - name: Build and push Docker image
+            id: build_and_push
             uses: docker/build-push-action@v4
             with:
               context: .
               push: true
               tags: ${{ secrets.DOCKER_REGISTRY }}/my-app:${{ github.sha }}
+
+          - name: Trigger Komodo Deployment
+            run: |
+              curl -X POST \
+                '${{ secrets.KOMODO_URL }}/api/v1/deploy' \
+                -H 'Authorization: Bearer ${{ secrets.KOMODO_API_KEY }}' \
+                -H 'Content-Type: application/json' \
+                -d '{
+                  "application": "my-app",
+                  "image": "${{ secrets.DOCKER_REGISTRY }}/my-app:${{ github.sha }}"
+                }'
     ```
-    This workflow will trigger on every push to the `main` branch, log in to your private registry, build the Docker image from your `Dockerfile`, and push it, tagged with the Git commit SHA.
+    **Note:** The API endpoint and payload (`/api/v1/deploy`) are illustrative. You'll need to refer to the Komodo documentation for the exact API details for triggering a deployment.
 
 ## 5. Security Considerations on DigitalOcean
 
--   **Firewall:** Use DigitalOcean Cloud Firewalls to restrict access to your registry.
-    -   Allow port `443` (for the registry) and `80` (for HTTP to HTTPS redirection) from anywhere.
-    -   If you expose the UI directly, you might want to restrict port `8080` to your company's IP addresses.
+-   **Firewall:** Use DigitalOcean Cloud Firewalls to restrict access to your services.
+    -   Allow port `443` (for the registry and Komodo) and `80` (for HTTP to HTTPS redirection) from anywhere.
+    -   Consider restricting access to the Komodo UI (`443` on `komodo.your-domain.com`) to your company's IP addresses if it's for internal use only.
     -   Allow port `22` (SSH) only from your trusted IP addresses.
 
--   **Backups:** The Docker volume `registry-data` contains all your images. Regularly back up this volume to prevent data loss. You can use DigitalOcean Snapshots or other backup solutions.
+-   **Backups:** The Docker volume `registry-data` contains all your images, and `komodo-data` contains your Komodo configuration. Regularly back up these volumes to prevent data loss. You can use DigitalOcean Snapshots or other backup solutions.
 
--   **Monitoring:** Monitor your Droplet's resource usage (CPU, memory, disk space) to ensure your registry remains performant.
+-   **Monitoring:** Monitor your Droplet's resource usage (CPU, memory, disk space) to ensure your registry and deployment system remain performant.
 
 ## Conclusion
 
-You now have a fully functional, secure, and private Docker Registry on DigitalOcean, complete with a web UI and CI/CD integration. This setup gives you full control over your Docker images, enhancing security and streamlining your development workflow. Remember to keep your server and Docker images updated to protect against vulnerabilities.
+You now have a fully functional, secure, and private Docker Registry on DigitalOcean, paired with Komodo as a powerful web UI for continuous deployment. This setup gives you full control over your Docker images and automates your deployment workflow. Remember to keep your server and Docker images updated to protect against vulnerabilities.
