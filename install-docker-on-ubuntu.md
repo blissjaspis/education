@@ -217,6 +217,8 @@ In this setup:
 - The `nginx` service gets read-only access to the application code to serve static files.
 - The application's storage is safely persisted in the `laravel-storage` volume.
 
+> **Note on Nested Volumes**: You might wonder why `laravel-storage` is defined separately when `app-code` already covers its parent directory. This is a powerful Docker feature. By defining a more specific mount path, the `laravel-storage` volume "masks" the `storage/` directory inside the `app-code` volume. This separates your persistent data (user uploads, cache, logs) from your stateless application code, which is critical for safe deployments and easy backups.
+
 -   **Limit Resources**: Configure memory and CPU limits for your containers to prevent them from consuming too many resources on the host.
 -   **Configure Logging**: By default, Docker uses the `json-file` logging driver, which can consume a lot of disk space. For production, configure a log rotation or use a different logging driver like `syslog` or send logs to a centralized logging solution.
 -   **Use Docker Content Trust (DCT)**: DCT provides cryptographic signing and verification of Docker images.
