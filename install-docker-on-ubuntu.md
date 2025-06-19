@@ -133,7 +133,39 @@ You can create a `docker-compose.yml` file to configure your application's servi
 For a production environment, consider the following:
 
 -   **Keep Docker Updated**: Always use the latest version of Docker Engine.
--   **Use a Non-Root User Inside Containers**: Avoid running processes as `root` inside your containers. Create a dedicated user in your `Dockerfile`.
+
+### Use a Non-Root User Inside Containers
+
+By default, processes inside a Docker container run as the `root` user. This poses a security risk because if an attacker compromises your application, they could potentially gain `root` access on the container. This could allow them to perform malicious actions, and potentially find a way to escalate their privileges to the host machine.
+
+To mitigate this, you should always run your container processes as a non-root user. This is known as the principle of least privilege.
+
+Here's how you can do it in your `Dockerfile`:
+
+1.  **Create a dedicated user and group**: You can use `RUN` commands to add a user and a group. It's a good practice to use static UID (User ID) and GID (Group ID).
+2.  **Set ownership of application files**: When you `COPY` your application files into the image, ensure the new user owns them. The `--chown` flag for the `COPY` instruction is perfect for this.
+3.  **Switch to the new user**: The `USER` instruction sets the user name (or UID) to use when running the image.
+
+**Example `Dockerfile` implementation:**
+
+```Dockerfile
+# ... (your base image, e.g., FROM ubuntu:22.04)
+
+# Create a user and group
+RUN groupadd -g 1000 myapp && \
+    useradd -u 1000 -g myapp -m -s /bin/bash myapp
+
+# Copy application files with correct ownership
+COPY --chown=myapp:myapp . /app
+
+# Switch to the non-root user
+USER myapp
+
+# Now, any subsequent commands (like CMD or ENTRYPOINT)
+# will be run as the 'myapp' user.
+CMD ["./start-app.sh"]
+```
+
 -   **Limit Resources**: Configure memory and CPU limits for your containers to prevent them from consuming too many resources on the host.
 -   **Configure Logging**: By default, Docker uses the `json-file` logging driver, which can consume a lot of disk space. For production, configure a log rotation or use a different logging driver like `syslog` or send logs to a centralized logging solution.
 -   **Use Docker Content Trust (DCT)**: DCT provides cryptographic signing and verification of Docker images.
