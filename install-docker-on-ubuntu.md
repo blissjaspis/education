@@ -166,6 +166,57 @@ USER myapp
 CMD ["./start-app.sh"]
 ```
 
+### Use Named Volumes Instead of Bind Mounts in Production
+
+While bind mounts are convenient for development (allowing you to edit code on the host and see changes live), they are not recommended for production. They create a tight coupling between the container and the host's filesystem, which harms portability and can introduce security risks.
+
+**The best practice for production is to use Docker-named volumes.**
+
+-   **For Application Code**: The code should be baked into the image using a `COPY` instruction in your `Dockerfile`. This makes your deployment a self-contained, versioned artifact. If multiple containers need access to the same code (like an Nginx container needing access to static files from a PHP application), they can share a named volume.
+-   **For Persistent Data**: Data that needs to persist beyond a container's lifecycle (like databases, user uploads, or logs) should always be stored in a named volume.
+
+**Example `docker-compose.yml` for a Laravel App:**
+
+This example shows how an Nginx and PHP-FPM service can share application code and persistent storage using named volumes.
+
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: . # Assumes Dockerfile is in the same directory
+      dockerfile: Dockerfile # Your PHP Dockerfile
+    image: my-laravel-app
+    volumes:
+      # Mounts the entire app code to a named volume
+      - app-code:/var/www/html
+      # Mounts the persistent storage directory to another named volume
+      - laravel-storage:/var/www/html/storage
+    # ... other app configurations
+
+  nginx:
+    image: nginx:stable-alpine
+    ports:
+      - "80:80"
+    volumes:
+      # Mounts the shared code volume (read-only is safer)
+      - app-code:/var/www/html:ro
+      # Mount a custom Nginx configuration
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - app
+
+volumes:
+  app-code:
+  laravel-storage:
+```
+
+In this setup:
+- The `app` service builds the image, `COPY`ing the code in. On its first run, it populates the `app-code` and `laravel-storage` volumes.
+- The `nginx` service gets read-only access to the application code to serve static files.
+- The application's storage is safely persisted in the `laravel-storage` volume.
+
 -   **Limit Resources**: Configure memory and CPU limits for your containers to prevent them from consuming too many resources on the host.
 -   **Configure Logging**: By default, Docker uses the `json-file` logging driver, which can consume a lot of disk space. For production, configure a log rotation or use a different logging driver like `syslog` or send logs to a centralized logging solution.
 -   **Use Docker Content Trust (DCT)**: DCT provides cryptographic signing and verification of Docker images.
