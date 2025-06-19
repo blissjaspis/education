@@ -214,10 +214,10 @@ volumes:
 
 In this setup:
 - The `app` service builds the image, `COPY`ing the code in. On its first run, it populates the `app-code` and `laravel-storage` volumes.
-- The `nginx` service gets read-only access to the application code to serve static files.
+- The `nginx` service gets read-only access to the application code to serve static files. This is the key purpose of the `app-code` volume: to share code between the `app` and `nginx` containers so Nginx can serve static files (like CSS and JS) directly and efficiently.
 - The application's storage is safely persisted in the `laravel-storage` volume.
 
-> **Note on Nested Volumes**: You might wonder why `laravel-storage` is defined separately when `app-code` already covers its parent directory. This is a powerful Docker feature. By defining a more specific mount path, the `laravel-storage` volume "masks" the `storage/` directory inside the `app-code` volume. This separates your persistent data (user uploads, cache, logs) from your stateless application code, which is critical for safe deployments and easy backups.
+> **Note on Nested Volumes**: You might wonder why `laravel-storage` is defined separately when `app-code` already covers its children directory. This is a powerful Docker feature. By defining a more specific mount path, the `laravel-storage` volume "masks" the `storage/` directory inside the `app-code` volume. This separates your persistent data (user uploads, cache, logs) from your stateless application code, which is critical for safe deployments and easy backups.
 
 -   **Limit Resources**: Configure memory and CPU limits for your containers to prevent them from consuming too many resources on the host.
 -   **Configure Logging**: By default, Docker uses the `json-file` logging driver, which can consume a lot of disk space. For production, configure a log rotation or use a different logging driver like `syslog` or send logs to a centralized logging solution.
