@@ -5,12 +5,12 @@ This guide provides a comprehensive walkthrough for setting up a secure, private
 ## Table of Contents
 - [Introduction](#introduction)
 - [Prerequisites](#prerequisites)
-- [1. Setting up the Docker Registry](#1-setting-up-the-docker-registry)
-- [2. Securing the Registry](#2-securing-the-registry)
-- [3. Adding a Web UI](#3-adding-a-web-ui)
-- [4. CI/CD Integration](#4-ci-cd-integration)
-- [5. Security Considerations on DigitalOcean](#5-security-considerations-on-digitalocean)
-- [6. Consolidating on a Single Host](#6-consolidating-on-a-single-host)
+- [1. Setting up the Core Infrastructure](#1-setting-up-the-core-infrastructure)
+- [2. Deploying Your First Website](#2-deploying-your-first-website)
+- [3. Managing and Deploying More Websites](#3-managing-and-deploying-more-websites)
+- [4. The Multi-Compose Strategy Explained](#4-the-multi-compose-strategy-explained)
+- [5. CI/CD Integration with Komodo](#5-ci-cd-integration-with-komodo)
+- [6. Security Considerations on DigitalOcean](#6-security-considerations-on-digitalocean)
 - [Conclusion](#conclusion)
 
 ## Introduction
@@ -27,42 +27,33 @@ This guide will use a DigitalOcean Droplet as the host, but the principles apply
 - Docker and Docker Compose installed on your Droplet.
 - DNS `A` record pointing a subdomain (e.g., `registry.your-domain.com`) to your Droplet's IP address. You will also need another subdomain for Komodo (e.g., `komodo.your-domain.com`) and domains for each website you plan to host.
 
-## 1. Setting up the Docker Registry
+## 1. Setting up the Core Infrastructure
 
-First, let's get a basic registry running. The official Docker Registry is available as a Docker image.
+This section covers setting up the shared, stable components of your system: the Nginx reverse proxy, the private Docker Registry, and the Komodo deployment tool.
 
-1.  **SSH into your Droplet:**
+1.  **Create Project Directories:**
+    On your DigitalOcean droplet, create a main directory for your projects. We'll create separate subdirectories for the core infrastructure and each website to keep things organized.
     ```bash
-    ssh root@your_droplet_ip
+    # Run from your home directory, e.g., /root/
+    mkdir -p ~/projects/core
+    cd ~/projects/core
     ```
 
-2.  **Run the registry container:**
+2.  **Create a Shared Docker Network:**
+    This is the key to allowing containers from different compose files to communicate. We create one external network that all our services will connect to.
     ```bash
-    docker run -d -p 5000:5000 --restart=always --name registry registry:2
-    ```
-    This command starts a registry container named `registry` listening on port 5000.
-
-At this point, you have a *local, insecure* registry. You can push and pull images from the Droplet itself, but you won't be able to connect from other machines without configuring Docker to trust this insecure registry, which is not recommended for production.
-
-## 2. Securing the Registry
-
-A production-ready registry must be secured. We'll use a reverse proxy (Nginx) to handle HTTPS (TLS) and basic authentication.
-
-We will use `docker-compose` to manage our services.
-
-1.  **Create a directory for your registry setup:**
-    ```bash
-    mkdir docker-registry && cd docker-registry
+    docker network create nginx-proxy-net
     ```
 
-2.  **Create Directories for Nginx and Certbot:**
+3.  **Create Directories for Nginx and Certbot:**
+    Inside `~/projects/core`, create the necessary config directories.
     ```bash
     mkdir -p nginx/conf.d
     mkdir -p certbot/www
     ```
 
-3.  **Create an Nginx configuration file:**
-    Create a file named `nginx/conf.d/registry.conf` with the following content. Replace `registry.your-domain.com`, `komodo.your-domain.com`, and your website domains with your actual domains.
+4.  **Create Nginx Configuration for Core Services:**
+    Create a file at `~/projects/core/nginx/conf.d/core.conf`. This file will contain the routing for your registry and Komodo.
 
     ```nginx
     upstream docker-registry {
@@ -72,160 +63,49 @@ We will use `docker-compose` to manage our services.
     server {
       listen 80;
       server_name registry.your-domain.com;
-
-      location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-      }
-
-      location / {
-        return 301 https://$host$request_uri;
-      }
-    }
-
-    server {
-      listen 80;
-      server_name komodo.your-domain.com;
-
-      location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-      }
-
-      location / {
-        return 301 https://$host$request_uri;
-      }
+      location /.well-known/acme-challenge/ { root /var/www/certbot; }
+      location / { return 301 https://$host$request_uri; }
     }
 
     server {
       listen 443 ssl http2;
       server_name registry.your-domain.com;
 
+      # SSL Certs
       ssl_certificate /etc/letsencrypt/live/registry.your-domain.com/fullchain.pem;
       ssl_certificate_key /etc/letsencrypt/live/registry.your-domain.com/privkey.pem;
-
-      # SSL settings
-      ssl_protocols TLSv1.2 TLSv1.3;
-      ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';
-      ssl_prefer_server_ciphers off;
-
-      client_max_body_size 0; # Allow large image uploads
-
-      location / {
-        # Required for authentication
-        auth_basic "Docker Registry";
-        auth_basic_user_file /etc/nginx/conf.d/registry.password;
-
-        proxy_pass http://docker-registry;
-        proxy_set_header Host $http_host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto "https";
-        proxy_read_timeout 900;
-      }
-    }
-
-    server {
-      listen 443 ssl http2;
-      server_name komodo.your-domain.com;
-
-      ssl_certificate /etc/letsencrypt/live/komodo.your-domain.com/fullchain.pem;
-      ssl_certificate_key /etc/letsencrypt/live/komodo.your-domain.com/privkey.pem;
-
-      # SSL settings
-      ssl_protocols TLSv1.2 TLSv1.3;
-      ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';
-
-      location / {
-        proxy_pass http://komodo:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto "https";
-        
-        # Required for WebSocket support
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-      }
-    }
-
-    # --- Add server blocks for each of your websites below ---
-    
-    upstream website1 {
-      server website1-container:8080; # Points to the service name and port in docker-compose
-    }
-
-    server {
-      listen 80;
-      server_name your-website-1.com;
-
-      location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-      }
-
-      location / {
-        return 301 https://$host$request_uri;
-      }
-    }
-
-    server {
-      listen 443 ssl http2;
-      server_name your-website-1.com;
-
-      ssl_certificate /etc/letsencrypt/live/your-website-1.com/fullchain.pem;
-      ssl_certificate_key /etc/letsencrypt/live/your-website-1.com/privkey.pem;
       
-      # SSL settings...
-
+      # Auth
+      auth_basic "Docker Registry";
+      auth_basic_user_file /etc/nginx/registry.password;
+      
       location / {
-        proxy_pass http://website1;
-        proxy_set_header Host $host;
+        proxy_pass http://docker-registry;
         # ... other proxy headers
       }
     }
 
-    # ... Add similar blocks for website2, website3, etc.
+    # Add Komodo config here as well...
     ```
 
-4.  **Set up Basic Authentication:**
-    We need `htpasswd` to create the password file.
+5.  **Set up Registry Authentication:**
+    Create the password file inside the `nginx` directory.
     ```bash
     sudo apt-get update && sudo apt-get install -y apache2-utils
+    htpasswd -c ./nginx/registry.password your_user
     ```
-    Create a user and password. Replace `your_user` with your desired username.
+
+6.  **Obtain SSL Certificates for Core Services:**
     ```bash
-    htpasswd -c nginx/conf.d/registry.password your_user
+    sudo apt-get update && sudo apt-get install -y certbot
+    sudo certbot certonly --webroot -w ./certbot/www \
+         -d registry.your-domain.com \
+         -d komodo.your-domain.com \
+         --email your-email@example.com --agree-tos --no-eff-email -n
     ```
 
-5.  **Obtaining SSL Certificates (Zero Downtime Method):**
-    We will use Certbot with the `webroot` method, which avoids any downtime by placing a verification file in a directory served by Nginx.
-
-    1.  **Install Certbot:**
-        First, install Certbot on your host machine.
-        ```bash
-        sudo apt-get update && sudo apt-get install -y certbot
-        ```
-
-    2.  **Obtain the Certificates:**
-        Run the following command for each of your domains. This tells Certbot to use the `webroot` authenticator and specifies the path to the challenge directory we created. This single command will obtain a certificate that covers all listed domains.
-        ```bash
-        sudo certbot certonly --webroot -w ./certbot/www \
-             -d registry.your-domain.com \
-             -d komodo.your-domain.com \
-             -d your-website-1.com \
-             # Add additional -d flags for other websites
-             --email your-email@example.com --agree-tos --no-eff-email -n
-        ```
-
-6.  **Setting up Automatic Renewals:**
-    The Certbot package automatically installs a systemd timer or cron job that will attempt to renew your certificates twice a day. Since we used the `webroot` method, renewals will happen automatically in the background without any service interruption.
-
-    You can verify that the renewal process is working by running a dry run:
-    ```bash
-    sudo certbot renew --dry-run
-    ```
-
-7.  **Create the `docker-compose.yml` file:**
-    Create a `docker-compose.yml` in your `docker-registry` directory. This will now include the registry, our Nginx proxy, and the Komodo service.
+7.  **Create the Core Infrastructure Compose File:**
+    Create a file at `~/projects/core/docker-compose-core.yml`. This manages your foundational services.
 
     ```yaml
     version: '3.7'
@@ -238,7 +118,7 @@ We will use `docker-compose` to manage our services.
         volumes:
           - registry-data:/var/lib/registry
         networks:
-          - registry-net
+          - proxy-net
 
       komodo:
         image: ghcr.io/moghtech/komodo:latest
@@ -247,93 +127,143 @@ We will use `docker-compose` to manage our services.
         volumes:
           - komodo-data:/app/data
         networks:
-          - registry-net
-        depends_on:
-          - registry
+          - proxy-net
 
       nginx-proxy:
         image: nginx:latest
-        container_name: registry-nginx-proxy
+        container_name: nginx-proxy
         restart: always
         ports:
           - "80:80"
           - "443:443"
         volumes:
-          - ./nginx/conf.d:/etc/nginx/conf.d:/etc/nginx/conf.d:ro
+          - ./nginx/conf.d:/etc/nginx/conf.d:ro
+          - ./nginx/registry.password:/etc/nginx/registry.password:ro
           - /etc/letsencrypt:/etc/letsencrypt:ro
           - ./certbot/www:/var/www/certbot:ro
         networks:
-          - registry-net
-        depends_on:
-          - registry
-          - komodo
-          - website1 # Nginx should depend on the websites it proxies
-          # - website2
-          # ...
-
-      # --- Add your website services below ---
-
-      website1:
-        image: registry.your-domain.com/my-website-1:latest
-        container_name: website1-container
-        restart: always
-        networks:
-          - registry-net
-        # environment:
-        #   - DB_HOST=...
-        #   - API_URL=...
-
-      # website2:
-      #   image: registry.your-domain.com/my-website-2:latest
-      #   container_name: website2-container
-      #   restart: always
-      #   networks:
-      #     - registry-net
+          - proxy-net
 
     networks:
-      registry-net:
+      proxy-net:
+        external: true
+        name: nginx-proxy-net
 
     volumes:
       registry-data:
       komodo-data:
     ```
 
-8.  **Start the services:**
+8.  **Start the Core Infrastructure:**
     ```bash
-    docker-compose up -d
+    docker-compose -f docker-compose-core.yml up -d
     ```
 
-Now you have a secure, private Docker registry accessible at `https://registry.your-domain.com`.
+## 2. Deploying Your First Website
 
-**To use it:**
+Now, let's deploy `your-website-1.com`. This process is completely separate and won't affect the core services.
 
-```bash
-# Login
-docker login registry.your-domain.com
+1.  **Create the Project Directory:**
+    ```bash
+    mkdir -p ~/projects/website1
+    cd ~/projects/website1
+    ```
 
-# Tag an image
-docker tag my-image:latest registry.your-domain.com/my-image:latest
+2.  **Add Nginx Configuration for the Website:**
+    Create a *new* config file for this website at `~/projects/core/nginx/conf.d/website1.conf`:
 
-# Push the image
-docker push registry.your-domain.com/my-image:latest
+    ```nginx
+    upstream website1 {
+      # This name must match the service name in docker-compose-website1.yml
+      server website1:8080; 
+    }
 
-# Pull the image from another machine
-docker pull registry.your-domain.com/my-image:latest
-```
+    server {
+      listen 80;
+      server_name your-website-1.com;
+      location /.well-known/acme-challenge/ { root /var/www/certbot; }
+      location / { return 301 https://$host$request_uri; }
+    }
 
-## 3. Adding a Web UI: Komodo
+    server {
+      listen 443 ssl http2;
+      server_name your-website-1.com;
 
-A Web UI for your build and deployment system, referencing [Komodo](https://github.com/moghtech/komodo). Komodo is a powerful open-source tool to build and deploy software across many servers, which fits perfectly with our private Docker registry.
+      ssl_certificate /etc/letsencrypt/live/your-website-1.com/fullchain.pem;
+      ssl_certificate_key /etc/letsencrypt/live/your-website-1.com/privkey.pem;
+      
+      location / {
+        proxy_pass http://website1;
+        proxy_set_header Host $host;
+        # ... other proxy headers
+      }
+    }
+    ```
 
-We have already integrated Komodo into our `docker-compose.yml` and exposed it securely via Nginx at `https://komodo.your-domain.com`.
+3.  **Obtain the Website's SSL Certificate:**
+    Note the webroot path is absolute now.
+    ```bash
+    sudo certbot certonly --webroot -w ~/projects/core/certbot/www -d your-website-1.com -n
+    ```
 
-### Initial Komodo Setup
+4.  **Reload Nginx:**
+    This crucial step makes Nginx aware of the new website without restarting anything.
+    ```bash
+    docker container exec nginx-proxy nginx -s reload
+    ```
 
-1.  **Access the UI:** Navigate to `https://komodo.your-domain.com` in your browser.
-2.  **Configuration:** Komodo's initial setup and configuration (like connecting to your servers, defining applications, and setting up deployment pipelines) are done through its web interface. You can consult the official [Komodo documentation](https://komo.do/) for detailed guidance on its features.
-3.  **Connecting to the Private Registry:** Within Komodo, when you define a new application or service, you will specify the image source. Here, you will use the full path to your private registry, e.g., `registry.your-domain.com/my-app:latest`. Since Komodo is running on the same Docker network, it can pull images from the registry. You will need to configure credentials for your private registry within Komodo's settings.
+5.  **Create the Website's Compose File:**
+    This is the answer to your question. Create this file at `~/projects/website1/docker-compose-website1.yml`. Notice how minimal it is.
 
-## 4. CI/CD Integration with Komodo
+    ```yaml
+    version: '3.7'
+
+    services:
+      website1:
+        # Pull the image from your private registry
+        image: registry.your-domain.com/my-website-1:latest
+        container_name: website1-container
+        restart: always
+        networks:
+          - proxy-net # Connect to the shared network
+        # environment:
+        #   - DATABASE_URL=...
+
+    networks:
+      proxy-net:
+        external: true
+        name: nginx-proxy-net # Specify the existing network
+    ```
+
+6.  **Deploy the Website:**
+    From inside `~/projects/website1`, run:
+    ```bash
+    docker-compose -f docker-compose-website1.yml up -d
+    ```
+
+Your website is now live, running independently of the core stack.
+
+## 3. Managing and Deploying More Websites
+
+To deploy `website2`, `website3`, and so on up to 20+, you simply repeat the steps from Section 2:
+1.  Create `~/projects/website2`.
+2.  Create `~/projects/core/nginx/conf.d/website2.conf`.
+3.  Get the certificate for `your-website-2.com`.
+4.  Reload Nginx.
+5.  Create `~/projects/website2/docker-compose-website2.yml`.
+6.  `docker-compose up` the new website.
+
+This file-based approach is robust and easy to automate with simple scripts, and as discussed, will scale perfectly well for 20+ websites on a single host, provided the server has enough resources.
+
+## 4. The Multi-Compose Strategy Explained
+
+The architecture in this guide uses the best practice for this scenario: **multiple, separate `docker-compose` files linked by a single, shared Docker network.**
+
+*   **Isolation:** Core infrastructure (`core.yml`) is separate from applications (`website1.yml`). You can update one without affecting the others.
+*   **Communication:** The manually created `nginx-proxy-net` allows the Nginx container to communicate with and route traffic to all website containers, regardless of which compose file they are in.
+*   **Clarity:** This structure makes it obvious where the configuration for each piece of your system lives, which is critical for long-term maintenance.
+
+## 5. CI/CD Integration with Komodo
 
 Integrating Komodo provides a more advanced CI/CD workflow. The process now becomes:
 1.  **CI (Continuous Integration):** Your CI pipeline (e.g., GitHub Actions) builds the Docker image and pushes it to your private registry.
@@ -391,36 +321,17 @@ Here's an updated GitHub Actions workflow that demonstrates this concept.
     ```
     **Note:** The API endpoint and payload (`/api/v1/deploy`) are illustrative. You'll need to refer to the Komodo documentation for the exact API details for triggering a deployment.
 
-## 5. Security Considerations on DigitalOcean
+## 6. Security Considerations on DigitalOcean
 
 -   **Firewall:** Use DigitalOcean Cloud Firewalls to restrict access to your services.
     -   Allow port `443` (for the registry and Komodo) and `80` (for HTTP to HTTPS redirection) from anywhere.
     -   Consider restricting access to the Komodo UI (`443` on `komodo.your-domain.com`) to your company's IP addresses if it's for internal use only.
     -   Allow port `22` (SSH) only from your trusted IP addresses.
 
--   **Backups:** The Docker volume `registry-data` contains all your images, and `komodo-data` contains your Komodo configuration. Regularly back up these volumes to prevent data loss. You can use DigitalOcean Snapshots or other backup solutions.
+-   **Backups:** The Docker volume `registry-data` contains all your images, and `komodo-data` contains your Komodo configuration. Regularly back up these volumes. **Crucially, also back up your `~/projects` directory**, as it now contains all your vital configuration-as-code.
 
 -   **Monitoring:** Monitor your Droplet's resource usage (CPU, memory, disk space) to ensure your registry and deployment system remain performant.
 
-## 6. Consolidating on a Single Host
-
-Running your production websites on the same host as your Docker registry and Komodo is a very efficient setup. It centralizes your infrastructure, simplifies networking, and speeds up deployments since images are pulled locally without traversing the internet.
-
-### Key Considerations
-
-*   **Server Resources**: This is the most important factor. You are now running the registry, Komodo, a reverse proxy, and multiple websites. Monitor your Droplet's CPU, RAM, and Disk Space usage closely. Start with a general-purpose Droplet with at least 4GB or 8GB of RAM and scale up as needed based on your websites' traffic and resource consumption.
-*   **Nginx as a Router**: As shown in the updated `nginx/conf.d/registry.conf` file, Nginx acts as the main router. It uses the `server_name` directive to direct traffic for each domain to the appropriate backend service defined in your `docker-compose.yml` file.
-*   **Docker Compose Expansion**: The updated `docker-compose.yml` file includes a template for adding your websites as services. Each service will pull its image from your private registry.
-*   **Security and Isolation**: While Docker provides process isolation, all services share the same host kernel. For enhanced security, you can create separate Docker networks for different groups of applications to prevent containers from communicating unless explicitly allowed. For instance, your websites might be on one network, and your admin tools (Komodo) on another.
-
-### Deployment Workflow
-
-The workflow remains the same, but it's now even more powerful:
-1.  **Develop**: Make changes to one of your website's codebases.
-2.  **CI**: Push the code, which triggers a GitHub Action. The action builds the new Docker image and pushes it to `registry.your-domain.com/my-website-1:latest`.
-3.  **CD**: The GitHub Action then makes an API call to Komodo.
-4.  **Deploy**: Komodo, running on the same server, pulls the new image from the local registry (which is very fast) and redeploys the `website1` service with the new image.
-
 ## Conclusion
 
-You now have a fully functional, secure, and private Docker Registry on DigitalOcean, paired with Komodo as a powerful web UI for continuous deployment. By extending this setup, you can efficiently manage and deploy multiple production websites from a single, consolidated server. This setup gives you full control over your Docker images and automates your deployment workflow. Remember to keep your server and Docker images updated to protect against vulnerabilities.
+You now have a fully functional, secure, and private Docker Registry on DigitalOcean, paired with Komodo as a powerful web UI for continuous deployment. By using a multi-compose file architecture, you can efficiently and safely manage and deploy 20+ production websites from a single, consolidated server. This setup gives you full control over your Docker images and automates your deployment workflow. Remember to keep your server and Docker images updated to protect against vulnerabilities.
