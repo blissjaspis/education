@@ -213,7 +213,7 @@ Now, let's deploy `your-website-1.com`. This process is completely separate and 
     ```
 
 5.  **Create the Website's Compose File:**
-    This is the answer to your question. Create this file at `~/projects/website1/docker-compose-website1.yml`. Notice how minimal it is.
+    Create this file at `~/projects/website1/docker-compose-website1.yml`. Notice how minimal it is.
 
     ```yaml
     version: '3.7'
