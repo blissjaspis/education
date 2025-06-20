@@ -55,9 +55,10 @@ We will use `docker-compose` to manage our services.
     mkdir docker-registry && cd docker-registry
     ```
 
-2.  **Create a directory for Nginx configuration:**
+2.  **Create Directories for Nginx and Certbot:**
     ```bash
     mkdir -p nginx/conf.d
+    mkdir -p certbot/www
     ```
 
 3.  **Create an Nginx configuration file:**
@@ -72,6 +73,10 @@ We will use `docker-compose` to manage our services.
       listen 80;
       server_name registry.your-domain.com;
 
+      location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+      }
+
       location / {
         return 301 https://$host$request_uri;
       }
@@ -80,6 +85,10 @@ We will use `docker-compose` to manage our services.
     server {
       listen 80;
       server_name komodo.your-domain.com;
+
+      location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+      }
 
       location / {
         return 301 https://$host$request_uri;
@@ -148,6 +157,11 @@ We will use `docker-compose` to manage our services.
     server {
       listen 80;
       server_name your-website-1.com;
+
+      location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+      }
+
       location / {
         return 301 https://$host$request_uri;
       }
@@ -182,17 +196,35 @@ We will use `docker-compose` to manage our services.
     htpasswd -c nginx/conf.d/registry.password your_user
     ```
 
-5.  **Use Certbot to get a Let's Encrypt Certificate:**
-    Install Certbot and get a certificate. You will need to do this for all the domains you are hosting.
-    ```bash
-    sudo certbot certonly --standalone -d registry.your-domain.com
-    sudo certbot certonly --standalone -d komodo.your-domain.com
-    sudo certbot certonly --standalone -d your-website-1.com
-    # ... and so on for your other websites
-    ```
-    This will create certificates in `/etc/letsencrypt/live/`.
+5.  **Obtaining SSL Certificates (Zero Downtime Method):**
+    We will use Certbot with the `webroot` method, which avoids any downtime by placing a verification file in a directory served by Nginx.
 
-6.  **Create the `docker-compose.yml` file:**
+    1.  **Install Certbot:**
+        First, install Certbot on your host machine.
+        ```bash
+        sudo apt-get update && sudo apt-get install -y certbot
+        ```
+
+    2.  **Obtain the Certificates:**
+        Run the following command for each of your domains. This tells Certbot to use the `webroot` authenticator and specifies the path to the challenge directory we created. This single command will obtain a certificate that covers all listed domains.
+        ```bash
+        sudo certbot certonly --webroot -w ./certbot/www \
+             -d registry.your-domain.com \
+             -d komodo.your-domain.com \
+             -d your-website-1.com \
+             # Add additional -d flags for other websites
+             --email your-email@example.com --agree-tos --no-eff-email -n
+        ```
+
+6.  **Setting up Automatic Renewals:**
+    The Certbot package automatically installs a systemd timer or cron job that will attempt to renew your certificates twice a day. Since we used the `webroot` method, renewals will happen automatically in the background without any service interruption.
+
+    You can verify that the renewal process is working by running a dry run:
+    ```bash
+    sudo certbot renew --dry-run
+    ```
+
+7.  **Create the `docker-compose.yml` file:**
     Create a `docker-compose.yml` in your `docker-registry` directory. This will now include the registry, our Nginx proxy, and the Komodo service.
 
     ```yaml
@@ -229,6 +261,7 @@ We will use `docker-compose` to manage our services.
         volumes:
           - ./nginx/conf.d:/etc/nginx/conf.d:/etc/nginx/conf.d:ro
           - /etc/letsencrypt:/etc/letsencrypt:ro
+          - ./certbot/www:/var/www/certbot:ro
         networks:
           - registry-net
         depends_on:
@@ -265,7 +298,7 @@ We will use `docker-compose` to manage our services.
       komodo-data:
     ```
 
-7.  **Start the services:**
+8.  **Start the services:**
     ```bash
     docker-compose up -d
     ```
