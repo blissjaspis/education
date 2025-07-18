@@ -271,53 +271,29 @@ class YourPackageServiceProvider extends ServiceProvider
 composer require --dev orchestra/testbench
 ```
 
-### 2. Create Workbench Configuration
+### 2. Install Workbench
 
-Create `workbench/bootstrap/app.php`:
-
-```php
-<?php
-
-use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Configuration\Exceptions;
-use Illuminate\Foundation\Configuration\Middleware;
-
-return Application::configure(basePath: dirname(__DIR__))
-    ->withRouting(
-        web: __DIR__.'/../routes/web.php',
-        commands: __DIR__.'/../routes/console.php',
-        health: '/up',
-    )
-    ->withMiddleware(function (Middleware $middleware) {
-        //
-    })
-    ->withExceptions(function (Exceptions $exceptions) {
-        //
-    })->create();
+```bash
+vendor/bin/testbench workbench:install
 ```
 
-### 3. Create Workbench Configuration File
+This command will automatically create the necessary workbench files including:
+- `workbench/bootstrap/app.php` - Application bootstrap
+- `workbench/config/` - Configuration files
+- `workbench/routes/` - Route files
+- `workbench/database/` - Database files
+- Other necessary workbench structure
 
-Create `workbench/config/app.php`:
+### 3. Configure Your Service Provider
+
+After installation, update `workbench/config/app.php` to include your service provider:
 
 ```php
-<?php
-
-return [
-    'name' => 'Your Package Workbench',
-    'env' => 'local',
-    'debug' => true,
-    'url' => env('APP_URL', 'http://localhost'),
-    'timezone' => 'UTC',
-    'locale' => 'en',
-    'fallback_locale' => 'en',
-    'faker_locale' => 'en_US',
-    'key' => env('APP_KEY', 'base64:'.base64_encode(random_bytes(32))),
-    'cipher' => 'AES-256-CBC',
-    'providers' => [
-        YourVendor\YourPackage\Providers\YourPackageServiceProvider::class,
-    ],
-];
+// In workbench/config/app.php, add your provider to the providers array:
+'providers' => [
+    // ... other providers
+    YourVendor\YourPackage\Providers\YourPackageServiceProvider::class,
+],
 ```
 
 ### 4. Initialize Workbench
