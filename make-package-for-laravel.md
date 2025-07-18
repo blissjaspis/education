@@ -350,6 +350,7 @@ Create `tests/TestCase.php`:
 
 namespace YourVendor\YourPackage\Tests;
 
+use Illuminate\Contracts\Config\Repository;
 use Orchestra\Testbench\TestCase as Orchestra;
 use YourVendor\YourPackage\Providers\YourPackageServiceProvider;
 
@@ -371,12 +372,15 @@ class TestCase extends Orchestra
 
     protected function defineEnvironment($app): void
     {
-        $app['config']->set('database.default', 'sqlite');
-        $app['config']->set('database.connections.sqlite', [
-            'driver' => 'sqlite',
-            'database' => ':memory:',
-            'prefix' => '',
-        ]);
+
+        tap($app['config'], function(Repository $config){
+            $config->set('database.default', 'sqlite');
+            $config->set('database.connections.sqlite', [
+                'driver' => 'sqlite',
+                'database' => ':memory:',
+                'prefix' => '',
+            ]);
+        });
     }
 
     protected function defineDatabaseMigrations(): void
