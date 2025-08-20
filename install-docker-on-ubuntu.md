@@ -1,12 +1,14 @@
-# How to Install and Use Docker on Ubuntu 22.04 for Production
+# How to Install and Use Docker on Ubuntu 24.04 LTS for Production
 
-This guide provides a comprehensive, step-by-by-step tutorial for installing Docker Community Edition (CE) on Ubuntu 22.04, from initial setup to production-ready best practices.
+This guide provides a comprehensive, step-by-step tutorial for installing Docker Community Edition (CE) on Ubuntu 24.04 LTS, from initial setup to production-ready best practices.
 
 ## Prerequisites
 
-- An Ubuntu 22.04 server (64-bit).
+- An Ubuntu 24.04 LTS server (64-bit).
 - A non-root user with `sudo` privileges.
 - An account on [Docker Hub](https://hub.docker.com/) if you want to push your own images.
+
+> **Note for Ubuntu 24.04 LTS**: This version includes enhanced security features such as restricted unprivileged user namespaces by default. Docker installation and operation remain unaffected by these changes when following this guide.
 
 ## Step 1: Uninstall Old Docker Versions
 
@@ -149,7 +151,7 @@ Here's how you can do it in your `Dockerfile`:
 **Example `Dockerfile` implementation:**
 
 ```Dockerfile
-# ... (your base image, e.g., FROM ubuntu:22.04)
+# ... (your base image, e.g., FROM ubuntu:24.04)
 
 # Create a user and group
 RUN groupadd -g 1000 myapp && \
@@ -244,4 +246,4 @@ With this method, you make a conscious decision to trade portability for efficie
 
 ## Conclusion
 
-You now have a production-ready Docker environment on your Ubuntu 22.04 server. You can build, ship, and run your applications using containers. For more advanced topics, refer to the official Docker documentation.
+You now have a production-ready Docker environment on your Ubuntu 24.04 LTS server. You can build, ship, and run your applications using containers. For more advanced topics, refer to the official Docker documentation.
