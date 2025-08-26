@@ -2,19 +2,38 @@
 
 This guide walks you through the essential steps to configure a new Ubuntu server, making it secure and ready for a production environment.
 
-## 1. Log in as Root
+## 1. Initial Server Access
 
-First, connect to your server as the `root` user. You'll need your server's IP address.
+How you first connect to your server depends on how it was provisioned by your hosting provider. Choose the method that matches your setup.
+
+### Method A: Logging in with a Root Password
+
+This method is common if your provider gave you a password for the `root` user. First, connect to your server. You'll need its IP address.
 
 ```bash
 ssh root@YOUR_SERVER_IP
 ```
 
-You will be prompted for the root password provided by your hosting provider.
+You will be prompted for the root password.
+
+### Method B: Logging in with an SSH Key
+
+This is a modern and more secure method where you provide your public SSH key to the hosting provider during server creation. In this case, password login is often disabled by default.
+
+Your provider will tell you the default username (it could be `root`, `ubuntu`, `ec2-user`, etc.).
+
+```bash
+# For root access
+ssh root@YOUR_SERVER_IP
+
+# Or for a default user on providers like AWS/GCP
+ssh ubuntu@YOUR_SERVER_IP
+```
+If you use this method, you can skip to step 2, as your initial SSH connection is already secure.
 
 ## 2. Create a New User
 
-Running commands as `root` is risky. It's best practice to create a non-root user with administrative privileges.
+Once you are logged in, the first step is to create a new user account that you will use for everyday administration. Running commands as `root` is risky.
 
 Replace `username` with your desired username.
 
@@ -26,65 +45,60 @@ You'll be asked to create a password and provide some information for the new us
 
 ### Grant Administrative Privileges
 
-Add the new user to the `sudo` group. This allows the user to run commands with `sudo`.
+Add the new user to the `sudo` group. This allows the user to run commands with administrative privileges by typing `sudo` before the command.
 
 ```bash
 usermod -aG sudo username
 ```
 
-## 3. Set Up SSH Key-Based Authentication
+## 3. Configure SSH Access for Your New User
 
-Using SSH keys is more secure than using passwords.
+The final goal is to be able to log in directly to the server as your new user with an SSH key. The method depends on how you first logged in.
 
-### Generate SSH Keys on Your Local Machine
+### If You Logged in with a Password (Method A)
 
-If you don't have SSH keys yet, generate them on your local computer.
+If you logged in as `root` using a password, you need to copy your local public SSH key to your new user's account on the server. This is the key that lives on your personal computer.
 
-```bash
-ssh-keygen
-```
-
-Press Enter to accept the default file location and options. You can optionally set a passphrase for extra security.
-
-### Copy Your Public Key to the Server
-
-The easiest way to copy your public key is with `ssh-copy-id`.
+The easiest way to do this is with the `ssh-copy-id` command from your local machine.
 
 ```bash
+# Run this command on your local computer
 ssh-copy-id username@YOUR_SERVER_IP
 ```
 
-If `ssh-copy-id` is not available, you can do it manually. First, display your public key:
+You will be prompted for the new user's password that you created in step 2. After this, you can log in as the new user without a password.
+
+### If You Logged in with an SSH Key (Method B)
+
+If you already logged in as `root` (or `ubuntu`) using an SSH key, you can simply copy the authorized key from the root/default user to your new user. This grants your new user access using the same SSH key.
+
+**Perform these commands on your server while logged in as root.**
 
 ```bash
-cat ~/.ssh/id_rsa.pub
+# Create the .ssh directory for the new user
+mkdir -p /home/username/.ssh
+
+# Copy the authorized keys file
+cp ~/.ssh/authorized_keys /home/username/.ssh/authorized_keys
+
+# Set the correct ownership and permissions
+chown -R username:username /home/username/.ssh
+chmod 700 /home/username/.ssh
+chmod 600 /home/username/.ssh/authorized_keys
 ```
 
-Copy the output. Now, log in to your server as the new user and create the `.ssh` directory and `authorized_keys` file.
+**Important:** After completing either of the steps above, open a **new** terminal window on your local machine and test that you can log in directly as your new user before proceeding.
 
 ```bash
-# Log in as the new user in a new terminal window
 ssh username@YOUR_SERVER_IP
-
-# On the server
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-nano ~/.ssh/authorized_keys
 ```
-
-Paste your public key into the `authorized_keys` file, then save and exit (`Ctrl+X`, `Y`, `Enter`).
-
-Set the correct permissions:
-
-```bash
-chmod 600 ~/.ssh/authorized_keys
-```
-
-Now, you should be able to log in as the new user without a password.
+You should connect successfully without a password.
 
 ## 4. Secure SSH
 
-Now that you can log in with SSH keys, you should disable password-based authentication and root login over SSH.
+Now that you can log in as your non-root user with SSH keys, it's time to harden the SSH service. This involves preventing the `root` user from logging in over SSH and disabling password-based authentication entirely.
+
+**Perform these steps while logged in as your new user (e.g., `ssh username@YOUR_SERVER_IP`).**
 
 ### Edit the SSH Configuration File
 
