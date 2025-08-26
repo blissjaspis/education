@@ -108,7 +108,7 @@ Save and close the file.
 To apply the changes, restart the SSH service.
 
 ```bash
-sudo systemctl restart sshd
+sudo systemctl restart ssh
 ```
 
 **Important:** Before logging out, open a new terminal window and test that you can still log in as your new user.
