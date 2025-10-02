@@ -18,6 +18,7 @@
 
 3. [Advanced Level](#advanced-level)
    - [Multi-stage Builds](#multi-stage-builds)
+   - [Multi-Platform Builds](#multi-platform-builds)
    - [Docker Security](#docker-security)
    - [Container Orchestration](#container-orchestration)
    - [Production Best Practices](#production-best-practices)
@@ -626,6 +627,367 @@ COPY --from=builder /app/main .
 CMD ["./main"]
 ```
 
+### Multi-Platform Builds
+
+Building Docker images for multiple CPU architectures (AMD64, ARM64, etc.) ensures your application runs on different hardware platforms like x86 servers, Apple Silicon, and ARM-based devices.
+
+#### Understanding Platform Architectures
+
+Common platforms:
+- **linux/amd64**: Standard x86_64 architecture (Intel/AMD processors)
+- **linux/arm64**: 64-bit ARM architecture (Apple Silicon, AWS Graviton, Raspberry Pi 4+)
+- **linux/arm/v7**: 32-bit ARM architecture (Older Raspberry Pi)
+- **linux/arm/v6**: ARMv6 architecture (Raspberry Pi Zero)
+
+#### Setting Up Docker Buildx
+
+Docker Buildx is the extended build capabilities that support multi-platform builds.
+
+```bash
+# Check if buildx is available
+docker buildx version
+
+# Create a new builder instance
+docker buildx create --name multiplatform-builder --use
+
+# Bootstrap the builder (downloads necessary components)
+docker buildx inspect --bootstrap
+
+# List available builders
+docker buildx ls
+```
+
+#### Building for Multiple Platforms
+
+##### Basic Multi-Platform Build
+```bash
+# Build for AMD64 and ARM64
+docker buildx build --platform linux/amd64,linux/arm64 -t myapp:latest .
+
+# Build and push to registry (required for multi-platform)
+docker buildx build \
+  --platform linux/amd64,linux/arm64,linux/arm/v7 \
+  -t username/myapp:latest \
+  --push .
+
+# Build and load locally (single platform only)
+docker buildx build \
+  --platform linux/amd64 \
+  -t myapp:latest \
+  --load .
+```
+
+##### Build with Tags
+```bash
+# Multiple tags for multi-platform image
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t username/myapp:latest \
+  -t username/myapp:v1.0.0 \
+  --push .
+```
+
+#### Multi-Platform Dockerfile Best Practices
+
+##### Platform-Specific Instructions
+```dockerfile
+# Use BUILDPLATFORM and TARGETPLATFORM
+FROM --platform=$BUILDPLATFORM node:16-alpine AS builder
+
+# Set architecture-specific variables
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /app
+
+# Display build information
+RUN echo "Building on $BUILDPLATFORM for $TARGETPLATFORM"
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+# Production stage
+FROM node:16-alpine
+
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+
+CMD ["node", "dist/index.js"]
+```
+
+##### Architecture-Specific Dependencies
+```dockerfile
+FROM --platform=$BUILDPLATFORM golang:1.19-alpine AS builder
+
+ARG TARGETARCH
+ARG TARGETOS
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# Build for specific target architecture
+RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    CGO_ENABLED=0 \
+    go build -o main .
+
+# Use platform-neutral final image
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+
+COPY --from=builder /app/main .
+
+CMD ["./main"]
+```
+
+#### Advanced Multi-Platform Examples
+
+##### Example: Python Application
+```dockerfile
+FROM --platform=$BUILDPLATFORM python:3.11-slim AS builder
+
+ARG TARGETPLATFORM
+
+WORKDIR /app
+
+# Install platform-specific dependencies if needed
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+COPY . .
+
+# Final stage
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy Python packages from builder
+COPY --from=builder /root/.local /root/.local
+COPY --from=builder /app /app
+
+# Ensure scripts are in PATH
+ENV PATH=/root/.local/bin:$PATH
+
+CMD ["python", "app.py"]
+```
+
+##### Example: Rust Multi-Platform Build
+```dockerfile
+FROM --platform=$BUILDPLATFORM rust:1.70-alpine AS builder
+
+ARG TARGETARCH
+ARG TARGETOS
+
+WORKDIR /app
+
+# Install cross-compilation tools if needed
+RUN apk add --no-cache musl-dev
+
+# Copy dependency files
+COPY Cargo.toml Cargo.lock ./
+
+# Build dependencies separately for better caching
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release
+RUN rm -rf src
+
+# Copy actual source
+COPY src ./src
+
+# Build for target architecture
+RUN cargo build --release
+
+FROM alpine:latest
+
+WORKDIR /app
+
+COPY --from=builder /app/target/release/myapp .
+
+CMD ["./myapp"]
+```
+
+#### Docker Compose with Multi-Platform
+
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    image: myapp:latest
+    ports:
+      - "3000:3000"
+```
+
+#### Building and Testing Multi-Platform Images
+
+```bash
+# Build for all platforms and push
+docker buildx build \
+  --platform linux/amd64,linux/arm64,linux/arm/v7 \
+  -t username/myapp:latest \
+  --push .
+
+# Inspect the multi-platform manifest
+docker buildx imagetools inspect username/myapp:latest
+
+# Test specific platform locally
+docker buildx build \
+  --platform linux/arm64 \
+  -t myapp:arm64 \
+  --load .
+
+docker run --platform linux/arm64 myapp:arm64
+```
+
+#### GitHub Actions Multi-Platform Build
+
+```yaml
+name: Docker Multi-Platform Build
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: |
+            username/myapp:latest
+            username/myapp:${{ github.sha }}
+          cache-from: type=registry,ref=username/myapp:latest
+          cache-to: type=inline
+```
+
+#### Best Practices for Multi-Platform Builds
+
+1. **Use Platform-Aware Base Images**
+```dockerfile
+# Official images typically support multiple platforms
+FROM node:16-alpine  # Supports amd64, arm64, arm/v7, etc.
+```
+
+2. **Leverage Build Cache**
+```bash
+# Use cache from registry
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --cache-from type=registry,ref=username/myapp:latest \
+  --cache-to type=inline \
+  -t username/myapp:latest \
+  --push .
+```
+
+3. **Test on Target Platforms**
+```bash
+# Use QEMU to test different architectures locally
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+# Run ARM container on AMD64 host
+docker run --platform linux/arm64 myapp:latest
+```
+
+4. **Optimize Build Time**
+```dockerfile
+# Use BUILDPLATFORM for build tools
+FROM --platform=$BUILDPLATFORM node:16-alpine AS deps
+
+# This stage runs on the build machine's architecture (faster)
+RUN npm ci
+
+# Only the final image needs to match TARGETPLATFORM
+FROM node:16-alpine
+COPY --from=deps /app/node_modules ./node_modules
+```
+
+5. **Handle Platform-Specific Dependencies**
+```dockerfile
+ARG TARGETARCH
+
+# Install architecture-specific binaries
+RUN case ${TARGETARCH} in \
+      "amd64")  ARCH=x86_64 ;; \
+      "arm64")  ARCH=aarch64 ;; \
+      "arm")    ARCH=armv7l ;; \
+      *)        echo "Unsupported architecture"; exit 1 ;; \
+    esac && \
+    wget https://example.com/binary-${ARCH}.tar.gz
+```
+
+#### Common Issues and Solutions
+
+**Issue: Build is slow**
+```bash
+# Solution: Use native builders when possible
+docker buildx create --name fast-builder \
+  --driver docker-container \
+  --platform linux/amd64 \
+  --use
+```
+
+**Issue: Cannot load multi-platform image locally**
+```bash
+# Solution: Build for single platform with --load
+docker buildx build \
+  --platform linux/amd64 \
+  -t myapp:latest \
+  --load .
+
+# Or extract specific platform from registry
+docker pull --platform linux/arm64 username/myapp:latest
+```
+
+**Issue: Cross-compilation errors**
+```dockerfile
+# Solution: Use emulation or native compilation
+FROM --platform=$BUILDPLATFORM golang:1.19-alpine AS builder
+
+# Install cross-compilation tools
+RUN apk add --no-cache gcc musl-dev
+
+# Enable CGO with proper cross-compilation
+ARG TARGETARCH
+ENV CGO_ENABLED=1
+ENV GOARCH=${TARGETARCH}
+```
+
 ### Docker Security
 
 #### Security Best Practices
@@ -912,8 +1274,9 @@ services:
 
 ### Advanced Exercises
 1. Implement a multi-stage build for optimization
-2. Set up monitoring and logging
-3. Create a production-ready deployment
+2. Build and deploy a multi-platform image for AMD64 and ARM64
+3. Set up monitoring and logging
+4. Create a production-ready deployment with health checks and resource limits
 
 ## Useful Commands Reference
 
