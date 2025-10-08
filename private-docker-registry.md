@@ -23,8 +23,8 @@ This guide will use a DigitalOcean Droplet as the host, but the principles apply
 
 - A DigitalOcean account.
 - A registered domain name (e.g., `your-domain.com`). This is highly recommended for setting up a secure registry with TLS.
-- A DigitalOcean Droplet (VPS) running a modern Linux distribution like Ubuntu 22.04.
-- Docker and Docker Compose installed on your Droplet.
+- A DigitalOcean Droplet (VPS) running Ubuntu 24.04 LTS.
+- Docker and Docker Compose V2 installed on your Droplet.
 - DNS `A` record pointing a subdomain (e.g., `registry.your-domain.com`) to your Droplet's IP address. You will also need another subdomain for Komodo (e.g., `komodo.your-domain.com`) and domains for each website you plan to host.
 
 ## 1. Setting up the Core Infrastructure
@@ -108,11 +108,9 @@ This section covers setting up the shared, stable components of your system: the
     Create a file at `~/projects/core/docker-compose-core.yml`. This manages your foundational services.
 
     ```yaml
-    version: '3.7'
-
     services:
       registry:
-        image: registry:2
+        image: registry:3
         container_name: private-registry
         restart: always
         volumes:
@@ -216,8 +214,6 @@ Now, let's deploy `your-website-1.com`. This process is completely separate and 
     Create this file at `~/projects/website1/docker-compose-website1.yml`. Notice how minimal it is.
 
     ```yaml
-    version: '3.7'
-
     services:
       website1:
         # Pull the image from your private registry
@@ -291,10 +287,10 @@ Here's an updated GitHub Actions workflow that demonstrates this concept.
         runs-on: ubuntu-latest
         steps:
           - name: Checkout repository
-            uses: actions/checkout@v3
+            uses: actions/checkout@v4
 
           - name: Log in to the Container registry
-            uses: docker/login-action@v2
+            uses: docker/login-action@v3
             with:
               registry: ${{ secrets.DOCKER_REGISTRY }}
               username: ${{ secrets.DOCKER_USERNAME }}
@@ -302,7 +298,7 @@ Here's an updated GitHub Actions workflow that demonstrates this concept.
 
           - name: Build and push Docker image
             id: build_and_push
-            uses: docker/build-push-action@v4
+            uses: docker/build-push-action@v6
             with:
               context: .
               push: true
@@ -311,15 +307,15 @@ Here's an updated GitHub Actions workflow that demonstrates this concept.
           - name: Trigger Komodo Deployment
             run: |
               curl -X POST \
-                '${{ secrets.KOMODO_URL }}/api/v1/deploy' \
+                '${{ secrets.KOMODO_URL }}/api/execute' \
                 -H 'Authorization: Bearer ${{ secrets.KOMODO_API_KEY }}' \
                 -H 'Content-Type: application/json' \
                 -d '{
-                  "application": "my-app",
-                  "image": "${{ secrets.DOCKER_REGISTRY }}/my-app:${{ github.sha }}"
+                  "type": "RunBuild",
+                  "params": { "build": "my-app" }
                 }'
     ```
-    **Note:** The API endpoint and payload (`/api/v1/deploy`) are illustrative. You'll need to refer to the Komodo documentation for the exact API details for triggering a deployment.
+    **Note:** Refer to [Komodo API docs](https://komo.do/docs/api) for exact endpoint details. The `/api/execute` endpoint triggers builds/deployments.
 
 ## 6. Security Considerations on DigitalOcean
 
