@@ -1,10 +1,11 @@
 # Private Docker Registry on DigitalOcean
 
-This guide provides a comprehensive walkthrough for setting up a secure, private Docker registry on a DigitalOcean VPS. We'll cover security, adding a web UI, and integrating with a CI/CD pipeline.
+This guide provides a comprehensive walkthrough for setting up a secure, private Docker registry on a DigitalOcean VPS. We'll cover security, authentication, and deployment options using either Nginx or Caddy as reverse proxies. Includes optional CI/CD integration with Komodo.
 
 ## Table of Contents
 - [Introduction](#introduction)
 - [Registry-Only Setup (Without Komodo)](#registry-only-setup-without-komodo)
+- [Alternative: Using Caddy Instead of Nginx](#alternative-using-caddy-instead-of-nginx)
 - [Prerequisites](#prerequisites)
 - [1. Setting up the Core Infrastructure](#1-setting-up-the-core-infrastructure)
 - [2. Pushing Images from Local Development](#2-pushing-images-from-local-development)
@@ -45,6 +46,77 @@ This guide will use a DigitalOcean Droplet as the host, but the principles apply
 6. **Skip Section 6**: "CI/CD Integration with Komodo" (not needed for basic registry)
 
 The registry will work identically for local development - you can still push, pull, and manage images as described in Section 2.
+
+## Alternative: Using Caddy Instead of Nginx
+
+If you prefer Caddy over Nginx, here's the equivalent configuration for the registry authentication. Caddy handles SSL certificates automatically with Let's Encrypt.
+
+### Caddy Configuration (Caddyfile)
+
+```caddyfile
+registry.your-domain.com {
+    # Automatic HTTPS with Let's Encrypt
+    tls your-email@example.com
+
+    # Basic auth for registry
+    basicauth {
+        # Hash generated with: caddy hash-password
+        your_user $2a$14$XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+    }
+
+    # Proxy to registry
+    reverse_proxy registry:5000
+}
+
+# Add Komodo config if using it
+komodo.your-domain.com {
+    tls your-email@example.com
+    reverse_proxy komodo:8080
+}
+```
+
+### Docker Setup for Caddy
+
+1. **Create password hash:**
+   ```bash
+   docker run --rm -it caddy:2 caddy hash-password
+   # Enter your password, copy the hash
+   ```
+
+2. **Create Caddyfile** at `~/projects/core/Caddyfile`
+
+3. **Create password file** at `~/projects/core/registry.password`:
+   ```bash
+   echo "your_user:$2a$14$YOUR_HASH_HERE" > registry.password
+   ```
+
+4. **Docker Compose for Caddy:**
+   ```yaml
+   services:
+     caddy:
+       image: caddy:2
+       ports:
+         - "80:80"
+         - "443:443"
+       volumes:
+         - ./Caddyfile:/etc/caddy/Caddyfile:ro
+         - ./registry.password:/etc/caddy/registry.password:ro
+         - caddy-data:/data
+         - caddy-config:/config
+       networks:
+         - proxy-net
+
+   networks:
+     proxy-net:
+       external: true
+       name: nginx-proxy-net  # Same network as registry
+
+   volumes:
+     caddy-data:
+     caddy-config:
+   ```
+
+**Note:** Caddy automatically handles SSL certificates - no need for certbot. The `basicauth` directive replaces nginx's `auth_basic` and `auth_basic_user_file`.
 
 ## Prerequisites
 
