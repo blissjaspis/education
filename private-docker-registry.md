@@ -49,7 +49,7 @@ The registry will work identically for local development - you can still push, p
 
 ## Alternative: Using Caddy Instead of Nginx
 
-If you prefer Caddy over Nginx, here's the equivalent configuration for the registry authentication. Caddy handles SSL certificates automatically with Let's Encrypt.
+If you prefer Caddy over Nginx, here's the configuration. Caddy handles SSL certificates automatically with Let's Encrypt.
 
 ### Caddy Configuration (Caddyfile)
 
