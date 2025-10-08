@@ -6,11 +6,12 @@ This guide provides a comprehensive walkthrough for setting up a secure, private
 - [Introduction](#introduction)
 - [Prerequisites](#prerequisites)
 - [1. Setting up the Core Infrastructure](#1-setting-up-the-core-infrastructure)
-- [2. Deploying Your First Website](#2-deploying-your-first-website)
-- [3. Managing and Deploying More Websites](#3-managing-and-deploying-more-websites)
-- [4. The Multi-Compose Strategy Explained](#4-the-multi-compose-strategy-explained)
-- [5. CI/CD Integration with Komodo](#5-ci-cd-integration-with-komodo)
-- [6. Security Considerations on DigitalOcean](#6-security-considerations-on-digitalocean)
+- [2. Pushing Images from Local Development](#2-pushing-images-from-local-development)
+- [3. Deploying Your First Website](#3-deploying-your-first-website)
+- [4. Managing and Deploying More Websites](#4-managing-and-deploying-more-websites)
+- [5. The Multi-Compose Strategy Explained](#5-the-multi-compose-strategy-explained)
+- [6. CI/CD Integration with Komodo](#6-ci-cd-integration-with-komodo)
+- [7. Security Considerations on DigitalOcean](#7-security-considerations-on-digitalocean)
 - [Conclusion](#conclusion)
 
 ## Introduction
@@ -113,6 +114,10 @@ This section covers setting up the shared, stable components of your system: the
         image: registry:3
         container_name: private-registry
         restart: always
+        environment:
+          - REGISTRY_HTTP_ADDR=0.0.0.0:5000
+          - REGISTRY_HTTP_SECRET=${REGISTRY_HTTP_SECRET}
+          - REGISTRY_STORAGE_DELETE_ENABLED=true
         volumes:
           - registry-data:/var/lib/registry
         networks:
@@ -152,12 +157,57 @@ This section covers setting up the shared, stable components of your system: the
       komodo-data:
     ```
 
-8.  **Start the Core Infrastructure:**
+8.  **Set Registry Environment Variable:**
+    Generate a random secret for the registry:
+    ```bash
+    export REGISTRY_HTTP_SECRET=$(openssl rand -hex 32)
+    echo "REGISTRY_HTTP_SECRET=$REGISTRY_HTTP_SECRET" >> ~/.bashrc
+    ```
+
+9.  **Start the Core Infrastructure:**
     ```bash
     docker-compose -f docker-compose-core.yml up -d
     ```
 
-## 2. Deploying Your First Website
+## 2. Pushing Images from Local Development
+
+Before deploying websites, you need to push your Docker images to the private registry from your local machine.
+
+1.  **Authenticate with Your Registry:**
+    From your local development machine:
+    ```bash
+    docker login registry.your-domain.com
+    # Enter the username and password you created with htpasswd
+    ```
+
+2.  **Tag and Push Your Images:**
+    ```bash
+    # Tag your local image
+    docker tag my-app:latest registry.your-domain.com/my-app:latest
+
+    # Push to your private registry
+    docker push registry.your-domain.com/my-app:latest
+    ```
+
+3.  **Pull Images from Registry:**
+    ```bash
+    # Pull from your private registry
+    docker pull registry.your-domain.com/my-app:latest
+    ```
+
+4.  **Manage Registry Content:**
+    ```bash
+    # List repositories via API
+    curl -u your_user https://registry.your-domain.com/v2/_catalog
+
+    # List tags for a repository
+    curl -u your_user https://registry.your-domain.com/v2/my-app/tags/list
+
+    # Delete an image (requires REGISTRY_STORAGE_DELETE_ENABLED=true)
+    curl -u your_user -X DELETE https://registry.your-domain.com/v2/my-app/manifests/latest
+    ```
+
+## 3. Deploying Your First Website
 
 Now, let's deploy `your-website-1.com`. This process is completely separate and won't affect the core services.
 
@@ -239,9 +289,9 @@ Now, let's deploy `your-website-1.com`. This process is completely separate and 
 
 Your website is now live, running independently of the core stack.
 
-## 3. Managing and Deploying More Websites
+## 4. Managing and Deploying More Websites
 
-To deploy `website2`, `website3`, and so on up to 20+, you simply repeat the steps from Section 2:
+To deploy `website2`, `website3`, and so on up to 20+, you simply repeat the steps from Section 3:
 1.  Create `~/projects/website2`.
 2.  Create `~/projects/core/nginx/conf.d/website2.conf`.
 3.  Get the certificate for `your-website-2.com`.
@@ -251,7 +301,7 @@ To deploy `website2`, `website3`, and so on up to 20+, you simply repeat the ste
 
 This file-based approach is robust and easy to automate with simple scripts, and as discussed, will scale perfectly well for 20+ websites on a single host, provided the server has enough resources.
 
-## 4. The Multi-Compose Strategy Explained
+## 5. The Multi-Compose Strategy Explained
 
 The architecture in this guide uses the best practice for this scenario: **multiple, separate `docker-compose` files linked by a single, shared Docker network.**
 
@@ -259,7 +309,7 @@ The architecture in this guide uses the best practice for this scenario: **multi
 *   **Communication:** The manually created `nginx-proxy-net` allows the Nginx container to communicate with and route traffic to all website containers, regardless of which compose file they are in.
 *   **Clarity:** This structure makes it obvious where the configuration for each piece of your system lives, which is critical for long-term maintenance.
 
-## 5. CI/CD Integration with Komodo
+## 6. CI/CD Integration with Komodo
 
 Integrating Komodo provides a more advanced CI/CD workflow. The process now becomes:
 1.  **CI (Continuous Integration):** Your CI pipeline (e.g., GitHub Actions) builds the Docker image and pushes it to your private registry.
@@ -317,7 +367,7 @@ Here's an updated GitHub Actions workflow that demonstrates this concept.
     ```
     **Note:** Refer to [Komodo API docs](https://komo.do/docs/api) for exact endpoint details. The `/api/execute` endpoint triggers builds/deployments.
 
-## 6. Security Considerations on DigitalOcean
+## 7. Security Considerations on DigitalOcean
 
 -   **Firewall:** Use DigitalOcean Cloud Firewalls to restrict access to your services.
     -   Allow port `443` (for the registry and Komodo) and `80` (for HTTP to HTTPS redirection) from anywhere.
