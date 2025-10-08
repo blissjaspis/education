@@ -4,6 +4,7 @@ This guide provides a comprehensive walkthrough for setting up a secure, private
 
 ## Table of Contents
 - [Introduction](#introduction)
+- [Registry-Only Setup (Without Komodo)](#registry-only-setup-without-komodo)
 - [Prerequisites](#prerequisites)
 - [1. Setting up the Core Infrastructure](#1-setting-up-the-core-infrastructure)
 - [2. Pushing Images from Local Development](#2-pushing-images-from-local-development)
@@ -20,17 +21,46 @@ A private Docker registry is a storage system for your Docker images, hosted on 
 
 This guide will use a DigitalOcean Droplet as the host, but the principles apply to any VPS provider or on-premises server.
 
+## Registry-Only Setup (Without Komodo)
+
+**Komodo is optional.** If you only want a simple private registry for storing and retrieving Docker images (like Docker Hub), you can skip Komodo entirely.
+
+### What You Get With Registry Only:
+- ✅ Private image storage (unlimited repositories)
+- ✅ Push/pull from local development
+- ✅ Authentication and security
+- ✅ HTTPS with TLS certificates
+
+### What You Lose Without Komodo:
+- ❌ Web UI for deployment management
+- ❌ Automated CI/CD deployment triggers
+- ❌ Advanced deployment features
+
+### Steps to Skip for Registry-Only Setup:
+1. **Skip Komodo DNS**: Don't create `komodo.your-domain.com` DNS record
+2. **Skip Komodo in nginx**: Remove Komodo upstream and server blocks from `core.conf`
+3. **Skip Komodo service**: Remove the `komodo` service from `docker-compose-core.yml`
+4. **Skip Komodo volume**: Remove `komodo-data` volume from compose file
+5. **Skip Komodo SSL**: Don't get SSL certificate for `komodo.your-domain.com`
+6. **Skip Section 6**: "CI/CD Integration with Komodo" (not needed for basic registry)
+
+The registry will work identically for local development - you can still push, pull, and manage images as described in Section 2.
+
 ## Prerequisites
 
 - A DigitalOcean account.
 - A registered domain name (e.g., `your-domain.com`). This is highly recommended for setting up a secure registry with TLS.
 - A DigitalOcean Droplet (VPS) running Ubuntu 24.04 LTS.
 - Docker and Docker Compose V2 installed on your Droplet.
-- DNS `A` record pointing a subdomain (e.g., `registry.your-domain.com`) to your Droplet's IP address. You will also need another subdomain for Komodo (e.g., `komodo.your-domain.com`) and domains for each website you plan to host.
+- DNS `A` record pointing a subdomain (e.g., `registry.your-domain.com`) to your Droplet's IP address.
+
+**Additional for full setup with Komodo:**
+- Another subdomain for Komodo (e.g., `komodo.your-domain.com`) if using the deployment UI.
+- Additional domains for each website you plan to host if deploying websites.
 
 ## 1. Setting up the Core Infrastructure
 
-This section covers setting up the shared, stable components of your system: the Nginx reverse proxy, the private Docker Registry, and the Komodo deployment tool.
+This section covers setting up the shared, stable components of your system: the Nginx reverse proxy and the private Docker Registry. (Komodo is optional - see [Registry-Only Setup](#registry-only-setup-without-komodo) if you don't need the deployment UI.)
 
 1.  **Create Project Directories:**
     On your DigitalOcean droplet, create a main directory for your projects. We'll create separate subdirectories for the core infrastructure and each website to keep things organized.
@@ -54,7 +84,7 @@ This section covers setting up the shared, stable components of your system: the
     ```
 
 4.  **Create Nginx Configuration for Core Services:**
-    Create a file at `~/projects/core/nginx/conf.d/core.conf`. This file will contain the routing for your registry and Komodo.
+    Create a file at `~/projects/core/nginx/conf.d/core.conf`. This file will contain the routing for your registry (and Komodo if you're using it).
 
     ```nginx
     upstream docker-registry {
@@ -89,6 +119,8 @@ This section covers setting up the shared, stable components of your system: the
     # Add Komodo config here as well...
     ```
 
+    **Note:** If you're not using Komodo, remove the Komodo upstream and server blocks from this file.
+
 5.  **Set up Registry Authentication:**
     Create the password file inside the `nginx` directory.
     ```bash
@@ -101,12 +133,12 @@ This section covers setting up the shared, stable components of your system: the
     sudo apt-get update && sudo apt-get install -y certbot
     sudo certbot certonly --webroot -w ./certbot/www \
          -d registry.your-domain.com \
-         -d komodo.your-domain.com \
          --email your-email@example.com --agree-tos --no-eff-email -n
+    # Add -d komodo.your-domain.com if using Komodo
     ```
 
 7.  **Create the Core Infrastructure Compose File:**
-    Create a file at `~/projects/core/docker-compose-core.yml`. This manages your foundational services.
+    Create a file at `~/projects/core/docker-compose-core.yml`. This manages your foundational services. (If not using Komodo, remove the `komodo` service and `komodo-data` volume from this file.)
 
     ```yaml
     services:
@@ -380,4 +412,6 @@ Here's an updated GitHub Actions workflow that demonstrates this concept.
 
 ## Conclusion
 
-You now have a fully functional, secure, and private Docker Registry on DigitalOcean, paired with Komodo as a powerful web UI for continuous deployment. By using a multi-compose file architecture, you can efficiently and safely manage and deploy 20+ production websites from a single, consolidated server. This setup gives you full control over your Docker images and automates your deployment workflow. Remember to keep your server and Docker images updated to protect against vulnerabilities.
+You now have a fully functional, secure, and private Docker Registry on DigitalOcean. For basic registry usage (storing and retrieving images like Docker Hub), this is complete - you can skip Komodo entirely as described in the [Registry-Only Setup](#registry-only-setup-without-komodo) section.
+
+If you choose to add Komodo, you'll get a powerful web UI for continuous deployment, allowing you to efficiently and safely manage and deploy 20+ production websites from a single, consolidated server. This setup gives you full control over your Docker images and automates your deployment workflow. Remember to keep your server and Docker images updated to protect against vulnerabilities.
