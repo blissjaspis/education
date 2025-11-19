@@ -1,22 +1,12 @@
 # Deploying Laravel to a Traditional Server
 
-This guide documents the process of deploying a Laravel application to a traditional Linux server (e.g., Ubuntu/Debian). It focuses on a secure permission setup using a specific non-root user.
+This guide documents the process of deploying a Laravel application to a traditional Linux server (e.g., Ubuntu/Debian), ensuring a secure and standard setup.
 
 ## 1. User Management
 
-We will use a dedicated non-root user named `deployer` (or your preferred username) for deployment and management. This user will share group membership with the web server user (`www-data`).
+You can use your default non-root user (e.g., `ubuntu`, `forge`, or your own user) to manage the deployment process. We will configure the permissions so that the web server user (`www-data`) owns the application code.
 
-### Create the User
-
-```bash
-# Create user 'deployer'
-sudo adduser deployer
-
-# Add 'deployer' to the 'www-data' group
-sudo usermod -aG www-data deployer
-```
-
-> **Note:** Ensure you are logged in as `deployer` or have switched to this user for the subsequent steps involving code management.
+Ensure your user has `sudo` privileges.
 
 ## 2. Server Prerequisites
 
@@ -34,11 +24,10 @@ Navigate to your web root (usually `/var/www/html` or `/var/www`) and clone your
 
 ```bash
 cd /var/www
+# Create directory and assign temporary ownership to your current user for cloning
 sudo mkdir -p my-app
-sudo chown deployer:www-data my-app
+sudo chown $USER:www-data my-app
 
-# Switch to user deployer if not already
-su - deployer
 cd /var/www/my-app
 
 # Clone your repository (ensure the directory is empty or clone into it)
@@ -47,32 +36,26 @@ git clone git@github.com:username/repo.git .
 
 ## 4. Installing Dependencies
 
-Install PHP dependencies using Composer.
+Install PHP dependencies using Composer. Since we haven't changed ownership to `www-data` yet, you can run this as your current user.
 
 ```bash
-composer install --optimize-autoloader --no-dev
+sudo -u www-data php composer.phar install --optimize-autoloader --no-dev
 ```
 
 ## 5. Permissions & Ownership
 
-This is a critical security step. We implement a split ownership model:
-- **Codebase**: Owned by `deployer:www-data`. This allows the deploy user to modify files, while the web server (group `www-data`) can read them.
-- **Writable Directories**: Owned by `www-data:www-data`. This allows the web server (PHP-FPM) to write to logs and caches.
+We will set the entire application to be owned by `www-data:www-data`. This is the standard approach for PHP-FPM setups where the web server acts as the owner of the files.
 
 ### Apply Ownership
 
 ```bash
-# 1. Set base ownership for the entire project to deployer:www-data
-sudo chown -R deployer:www-data /var/www/my-app
-
-# 2. Set specific ownership for writable directories to www-data:www-data
-sudo chown -R www-data:www-data /var/www/my-app/storage
-sudo chown -R www-data:www-data /var/www/my-app/bootstrap/cache
+# Set ownership for the entire project to www-data:www-data
+sudo chown -R www-data:www-data /var/www/my-app
 ```
 
 ### Apply Permissions
 
-Ensure the directories are writable by the group (`www-data`).
+Ensure standard permissions are applied.
 
 ```bash
 # Standard files: 644 (Owner read/write, Group read, Others read)
@@ -80,20 +63,6 @@ find /var/www/my-app -type f -exec chmod 644 {} \;
 
 # Standard directories: 755 (Owner r/w/x, Group r/x, Others r/x)
 find /var/www/my-app -type d -exec chmod 755 {} \;
-
-# Writable directories: Ensure group has write access
-# storage and bootstrap/cache need to be writable by the web server
-sudo chmod -R 775 /var/www/my-app/storage
-sudo chmod -R 775 /var/www/my-app/bootstrap/cache
-```
-
-### Set Group ID (SGID)
-
-It is highly recommended to set the SGID bit on writable directories. This ensures that any new files created within these directories (e.g., by the `deployer` user running artisan commands) inherit the `www-data` group, keeping them writable by the web server.
-
-```bash
-sudo chmod -R g+s /var/www/my-app/storage
-sudo chmod -R g+s /var/www/my-app/bootstrap/cache
 ```
 
 ## 6. Environment Configuration
@@ -105,25 +74,24 @@ cp .env.example .env
 nano .env
 ```
 
-Update your database credentials and other settings. Then generate the application key:
+Update your database credentials and other settings. Then generate the application key. Since ownership is now `www-data`, we run artisan commands as that user.
 
 ```bash
-php artisan key:generate
+sudo -u www-data php artisan key:generate
 ```
 
 ## 7. Finalizing Deployment
 
 Run database migrations and cache configurations.
 
+**Important:** Always run Artisan commands that generate files (like `optimize` or `migrate`) as `www-data` to ensure the generated files have the correct ownership.
+
 ```bash
 # Run migrations
-php artisan migrate --force
+sudo -u www-data php artisan migrate --force
 
 # Cache configurations (production only)
-php artisan config:cache
-php artisan event:cache
-php artisan route:cache
-php artisan view:cache
+sudo -u www-data php artisan optimize
 ```
 
 ## 8. Web Server Configuration (Nginx Example)
@@ -176,6 +144,6 @@ sudo systemctl restart nginx
 
 | Path | Owner | Group | Permissions | Purpose |
 |------|-------|-------|-------------|---------|
-| `/var/www/my-app` | `deployer` | `www-data` | `755` | Application code (read-only for web server) |
-| `/var/www/my-app/storage` | `www-data` | `www-data` | `775` + `g+s` | Logs, sessions, compiled views (writable by web server) |
-| `/var/www/my-app/bootstrap/cache` | `www-data` | `www-data` | `775` + `g+s` | Framework cache (writable by web server) |
+| `/var/www/my-app` | `www-data` | `www-data` | `755` | Application code |
+| `/var/www/my-app/storage` | `www-data` | `www-data` | `775` | Logs, sessions, compiled views |
+| `/var/www/my-app/bootstrap/cache` | `www-data` | `www-data` | `775` | Framework cache |
